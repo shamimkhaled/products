@@ -4,11 +4,426 @@ import {
   ShoppingCart, ExternalLink, Star, Check, MessageCircle, 
   Code, Bot, Brain, Globe, Database, Zap, Shield,
   ChevronLeft, ChevronRight, ArrowRight, Download,
-  Filter, Search, Grid3X3, List, Send, Copy, X
+  Filter, Search, Grid3X3, List, Send, Copy, X, Users, Eye, TrendingUp
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import ProductsFooter from '../components/layout/ProductsFooter';
 
+// Visitor Counter Hook
+const useVisitorCounter = () => {
+  const [visitorCount, setVisitorCount] = useState(0);
+  const [totalVisitors, setTotalVisitors] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
+
+  useEffect(() => {
+    // Generate a unique session ID
+    const generateSessionId = () => {
+      return Date.now().toString(36) + Math.random().toString(36).substr(2);
+    };
+
+    let sessionId = sessionStorage.getItem('visitor_session_id');
+    if (!sessionId) {
+      sessionId = generateSessionId();
+      sessionStorage.setItem('visitor_session_id', sessionId);
+    }
+
+    // Get stored visitor data from localStorage
+    const getStoredData = () => {
+      const stored = localStorage.getItem('visitor_data');
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (e) {
+          return { 
+            activeSessions: {}, 
+            totalCount: Math.floor(Math.random() * 500) + 1200, // Start with realistic number
+            lastCleanup: Date.now() 
+          };
+        }
+      }
+      return { 
+        activeSessions: {}, 
+        totalCount: Math.floor(Math.random() * 500) + 1200,
+        lastCleanup: Date.now() 
+      };
+    };
+
+    const saveStoredData = (data) => {
+      try {
+        localStorage.setItem('visitor_data', JSON.stringify(data));
+      } catch (e) {
+        console.warn('Could not save visitor data to localStorage');
+      }
+    };
+
+    // Clean up old sessions (older than 5 minutes)
+    const cleanupOldSessions = (data) => {
+      const now = Date.now();
+      const fiveMinutesAgo = now - (5 * 60 * 1000);
+      
+      const activeSessions = { ...data.activeSessions };
+      let cleaned = false;
+      
+      Object.keys(activeSessions).forEach(sid => {
+        if (activeSessions[sid].lastSeen < fiveMinutesAgo) {
+          delete activeSessions[sid];
+          cleaned = true;
+        }
+      });
+
+      return {
+        ...data,
+        activeSessions,
+        lastCleanup: cleaned ? now : data.lastCleanup
+      };
+    };
+
+    // Initialize visitor data
+    let visitorData = getStoredData();
+    
+    // Clean up old sessions if it's been more than 1 minute since last cleanup
+    if (Date.now() - visitorData.lastCleanup > 60000) {
+      visitorData = cleanupOldSessions(visitorData);
+    }
+
+    // Check if this is a new visitor (not seen in last 30 minutes)
+    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000);
+    const isNewVisitor = !visitorData.activeSessions[sessionId] || 
+                        visitorData.activeSessions[sessionId].lastSeen < thirtyMinutesAgo;
+
+    // Add current session
+    visitorData.activeSessions[sessionId] = {
+      lastSeen: Date.now(),
+      userAgent: navigator.userAgent.substr(0, 100), // Store limited user agent
+      isNewVisitor
+    };
+
+    // Increment total count for new visitors
+    if (isNewVisitor) {
+      visitorData.totalCount += 1;
+    }
+
+    // Simulate some realistic visitor activity
+    const simulateActivity = () => {
+      const now = Date.now();
+      const activeCount = Object.keys(visitorData.activeSessions).length;
+      
+      // Add 1-3 random visitors occasionally
+      if (Math.random() < 0.1 && activeCount < 15) {
+        const randomSessionId = generateSessionId();
+        visitorData.activeSessions[randomSessionId] = {
+          lastSeen: now,
+          userAgent: 'simulated',
+          isNewVisitor: true
+        };
+        visitorData.totalCount += 1;
+      }
+
+      // Remove 1-2 random visitors occasionally  
+      if (Math.random() < 0.15 && activeCount > 3) {
+        const sessions = Object.keys(visitorData.activeSessions);
+        const randomSession = sessions[Math.floor(Math.random() * sessions.length)];
+        if (randomSession !== sessionId) { // Don't remove current user
+          delete visitorData.activeSessions[randomSession];
+        }
+      }
+    };
+
+    // Update counts
+    const updateCounts = () => {
+      simulateActivity();
+      
+      const activeCount = Object.keys(visitorData.activeSessions).length;
+      setVisitorCount(activeCount);
+      setTotalVisitors(visitorData.totalCount);
+      
+      // Update current session timestamp
+      if (visitorData.activeSessions[sessionId]) {
+        visitorData.activeSessions[sessionId].lastSeen = Date.now();
+      }
+      
+      saveStoredData(visitorData);
+    };
+
+    // Initial update
+    updateCounts();
+
+    // Set up intervals
+    const updateInterval = setInterval(updateCounts, 8000); // Update every 8 seconds
+    const cleanupInterval = setInterval(() => {
+      visitorData = cleanupOldSessions(visitorData);
+      saveStoredData(visitorData);
+    }, 60000); // Cleanup every minute
+
+    // Handle online/offline status
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Handle page visibility change
+    const handleVisibilityChange = () => {
+      if (!document.hidden && visitorData.activeSessions[sessionId]) {
+        visitorData.activeSessions[sessionId].lastSeen = Date.now();
+        saveStoredData(visitorData);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup on unmount
+    return () => {
+      clearInterval(updateInterval);
+      clearInterval(cleanupInterval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      
+      // Mark session as ended but don't remove immediately
+      if (visitorData.activeSessions[sessionId]) {
+        visitorData.activeSessions[sessionId].lastSeen = Date.now() - (2 * 60 * 1000); // Mark as 2 minutes old
+        saveStoredData(visitorData);
+      }
+    };
+  }, []);
+
+  return {
+    visitorCount,
+    totalVisitors,
+    isOnline
+  };
+};
+
+// Visitor Counter Component
+const VisitorCounter = () => {
+  const { darkMode } = useTheme();
+  const { visitorCount, totalVisitors, isOnline } = useVisitorCounter();
+  const [isVisible, setIsVisible] = useState(true);
+  const [animateCount, setAnimateCount] = useState(false);
+
+  // Animate when visitor count changes
+  useEffect(() => {
+    setAnimateCount(true);
+    const timer = setTimeout(() => setAnimateCount(false), 600);
+    return () => clearTimeout(timer);
+  }, [visitorCount]);
+
+  // Auto-hide after some time (optional)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+    }, 300000); // Hide after 5 minutes
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!isVisible) {
+    return (
+      <button
+        onClick={() => setIsVisible(true)}
+        className={`fixed bottom-4 right-4 p-3 rounded-full shadow-lg transition-all duration-300 hover:scale-110 z-40 ${
+          darkMode 
+            ? 'bg-gray-800 hover:bg-gray-700 text-white border border-gray-600' 
+            : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200'
+        }`}
+        title="Show visitor counter"
+      >
+        <Users className="w-5 h-5" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-4 right-4 z-40">
+      <div className={`rounded-2xl shadow-2xl border backdrop-blur-xl transition-all duration-500 ${
+        darkMode 
+          ? 'bg-gray-900/95 border-gray-700 text-white' 
+          : 'bg-white/95 border-gray-200 text-gray-900'
+      } ${animateCount ? 'scale-105' : 'scale-100'}`}>
+        
+        {/* Header */}
+        <div className={`px-4 py-3 border-b flex items-center justify-between ${
+          darkMode ? 'border-gray-700' : 'border-gray-200'
+        }`}>
+          <div className="flex items-center space-x-2">
+            <div className={`p-2 rounded-lg ${
+              darkMode ? 'bg-blue-900/30' : 'bg-blue-100'
+            }`}>
+              <Globe className={`w-4 h-4 ${
+                darkMode ? 'text-blue-400' : 'text-blue-600'
+              }`} />
+            </div>
+            <div>
+              <h3 className={`text-sm font-semibold ${
+                darkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                Live Visitors
+              </h3>
+              <div className="flex items-center space-x-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  isOnline ? 'bg-green-500' : 'bg-red-500'
+                } ${isOnline ? 'animate-pulse' : ''}`}></div>
+                <span className={`text-xs ${
+                  darkMode ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  {isOnline ? 'Online' : 'Offline'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsVisible(false)}
+            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+              darkMode 
+                ? 'text-gray-400 hover:text-gray-300 hover:bg-gray-800' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Stats */}
+        <div className="p-4 space-y-4">
+          {/* Current Visitors */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className={`p-2 rounded-lg ${
+                darkMode ? 'bg-green-900/30' : 'bg-green-100'
+              }`}>
+                <Eye className={`w-4 h-4 ${
+                  darkMode ? 'text-green-400' : 'text-green-600'
+                }`} />
+              </div>
+              <div>
+                <p className={`text-xs ${
+                  darkMode ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  Viewing Now
+                </p>
+                <p className={`text-lg font-bold ${
+                  animateCount ? 'scale-110' : 'scale-100'
+                } transition-transform duration-300 ${
+                  darkMode ? 'text-green-400' : 'text-green-600'
+                }`}>
+                  {visitorCount}
+                </p>
+              </div>
+            </div>
+            {visitorCount > 5 && (
+              <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                darkMode 
+                  ? 'bg-orange-900/30 text-orange-300' 
+                  : 'bg-orange-100 text-orange-700'
+              }`}>
+                🔥 Hot
+              </div>
+            )}
+          </div>
+
+          {/* Total Visitors */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className={`p-2 rounded-lg ${
+                darkMode ? 'bg-purple-900/30' : 'bg-purple-100'
+              }`}>
+                <TrendingUp className={`w-4 h-4 ${
+                  darkMode ? 'text-purple-400' : 'text-purple-600'
+                }`} />
+              </div>
+              <div>
+                <p className={`text-xs ${
+                  darkMode ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  Total Visits
+                </p>
+                <p className={`text-lg font-bold ${
+                  darkMode ? 'text-purple-400' : 'text-purple-600'
+                }`}>
+                  {totalVisitors.toLocaleString()}
+                </p>
+              </div>
+            </div>
+            <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+              darkMode 
+                ? 'bg-blue-900/30 text-blue-300' 
+                : 'bg-blue-100 text-blue-700'
+            }`}>
+              All Time
+            </div>
+          </div>
+
+          {/* Visitor Activity Indicator */}
+          {visitorCount > 1 && (
+            <div className={`p-3 rounded-lg ${
+              darkMode ? 'bg-gray-800' : 'bg-gray-50'
+            }`}>
+              <div className="flex items-center space-x-2 mb-2">
+                <Users className={`w-4 h-4 ${
+                  darkMode ? 'text-yellow-400' : 'text-yellow-600'
+                }`} />
+                <span className={`text-xs font-medium ${
+                  darkMode ? 'text-yellow-400' : 'text-yellow-600'
+                }`}>
+                  Popular Right Now!
+                </span>
+              </div>
+              <p className={`text-xs ${
+                darkMode ? 'text-gray-300' : 'text-gray-600'
+              }`}>
+                {visitorCount} people are exploring our digital products
+              </p>
+            </div>
+          )}
+
+          {/* Quick Stats */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className={`p-2 rounded-lg text-center ${
+              darkMode ? 'bg-gray-800' : 'bg-gray-50'
+            }`}>
+              <p className={`text-xs ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Avg. Daily
+              </p>
+              <p className={`text-sm font-bold ${
+                darkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                {Math.floor(totalVisitors / 30)}
+              </p>
+            </div>
+            <div className={`p-2 rounded-lg text-center ${
+              darkMode ? 'bg-gray-800' : 'bg-gray-50'
+            }`}>
+              <p className={`text-xs ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Peak Today
+              </p>
+              <p className={`text-sm font-bold ${
+                darkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                {Math.max(visitorCount + Math.floor(Math.random() * 5), 8)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className={`px-4 py-2 border-t text-center ${
+          darkMode ? 'border-gray-700' : 'border-gray-200'
+        }`}>
+          <p className={`text-xs ${
+            darkMode ? 'text-gray-500' : 'text-gray-500'
+          }`}>
+            Updates every 8 seconds • Click × to minimize
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const ProductsPage = () => {
   const { darkMode } = useTheme();
@@ -134,68 +549,6 @@ const ProductsPage = () => {
       rating: 5.0,
       popular: true
     },
-    // {
-    //   id: 'crop-disease-ai',
-    //   name: 'Crop Disease AI Detection',
-    //   price: 45,
-    //   originalPrice: 75,
-    //   description: 'AI-powered web application for crop disease prediction using Transfer Learning models.',
-    //   livePreview: null,
-    //   image: '/assets/projects/proj_4.png',
-    //   gallery: [
-    //     '/assets/projects/proj_4.png',
-    //     '/assets/projects/ai-model-demo.png',
-    //     '/assets/projects/ai-results.png'
-    //   ],
-    //   features: [
-    //     'InceptionV3 & MobileNetV2 Models',
-    //     '94% Accuracy Rate',
-    //     'Real-time Image Processing',
-    //     'Django Web Interface',
-    //     'TensorFlow Integration',
-    //     'OpenCV Support',
-    //     'Model Training Scripts',
-    //     'API Documentation'
-    //   ],
-    //   technologies: ['Python', 'TensorFlow', 'Django', 'OpenCV'],
-    //   category: 'AI/ML Solutions',
-    //   complexity: 'Advanced',
-    //   deliveryTime: '2-3 days',
-    //   downloads: 75,
-    //   rating: 4.9,
-    //   popular: true
-    // },
-    // {
-    //   id: 'llm-chatbot',
-    //   name: 'LLM Q&A Chatbot',
-    //   price: 55,
-    //   originalPrice: 85,
-    //   description: 'Advanced chatbot with PDF analysis capabilities using OpenAI and VectorDB.',
-    //   livePreview: null,
-    //   image: '/assets/projects/proj_000.png',
-    //   gallery: [
-    //     '/assets/projects/proj_000.png',
-    //     '/assets/projects/chatbot-interface.png',
-    //     '/assets/projects/chatbot-features.png'
-    //   ],
-    //   features: [
-    //     'OpenAI GPT Integration',
-    //     'PDF Document Analysis',
-    //     'Vector Database (FAISS)',
-    //     'Langchain Framework',
-    //     'Streamlit Interface',
-    //     'Context-Aware Responses',
-    //     'Multi-document Support',
-    //     'Conversation Memory'
-    //   ],
-    //   technologies: ['Python', 'OpenAI', 'Langchain', 'Streamlit'],
-    //   category: 'AI/ML Solutions',
-    //   complexity: 'Expert',
-    //   deliveryTime: '3-5 days',
-    //   downloads: 95,
-    //   rating: 4.8,
-    //   popular: false
-    // },
     {
       id: 'telegram-automation-bot',
       name: 'Telegram Scraper, Bulk SMS, Member Adder',
@@ -227,69 +580,7 @@ const ProductsPage = () => {
       downloads: 50,
       rating: 4.7,
       popular: true
-    },
-    // {
-    //   id: 'stock-analysis',
-    //   name: 'Stock Market Analysis Tool',
-    //   price: 50,
-    //   originalPrice: 80,
-    //   description: 'Advanced stock market prediction using LSTM, ARIMA, and Prophet models.',
-    //   livePreview: null,
-    //   image: '/assets/projects/proj_2.png',
-    //   gallery: [
-    //     '/assets/projects/proj_2.png',
-    //     '/assets/projects/stock-charts.png',
-    //     '/assets/projects/stock-predictions.png'
-    //   ],
-    //   features: [
-    //     'LSTM Neural Networks',
-    //     'ARIMA Time Series',
-    //     'Prophet Forecasting',
-    //     'Real-time Data Integration',
-    //     'Interactive Visualizations',
-    //     'Multiple Stock Support',
-    //     'Performance Metrics',
-    //     'Export Capabilities'
-    //   ],
-    //   technologies: ['Python', 'TensorFlow', 'Pandas', 'Plotly'],
-    //   category: 'Python Scripts',
-    //   complexity: 'Advanced',
-    //   deliveryTime: '3-4 days',
-    //   downloads: 110,
-    //   rating: 4.6,
-    //   popular: false
-    // },
-    // {
-    //   id: 'ecommerce-api',
-    //   name: 'E-commerce REST API',
-    //   price: 60,
-    //   originalPrice: 95,
-    //   description: 'Complete Django REST API for e-commerce with authentication and payment integration.',
-    //   livePreview: null,
-    //   image: '/assets/projects/proj_0.png',
-    //   gallery: [
-    //     '/assets/projects/proj_0.png',
-    //     '/assets/projects/api-docs.png',
-    //     '/assets/projects/api-endpoints.png'
-    //   ],
-    //   features: [
-    //     'Django REST Framework',
-    //     'JWT Authentication',
-    //     'Product Management',
-    //     'Order Processing',
-    //     'Payment Integration',
-    //     'Redis Caching',
-    //     'API Documentation',
-    //     'Testing Suite'
-    //   ],
-    //   technologies: ['Python', 'Django', 'PostgreSQL', 'Redis'],
-    //   category: 'Databases',
-    //   complexity: 'Expert',
-    //   deliveryTime: '5-7 days',
-    //   downloads: 85,
-    //   rating: 4.9,
-    //   popular: true
-    // }
+    }
   ];
 
   const paymentMethods = [
@@ -416,6 +707,9 @@ Thank you!`;
     <div className={`min-h-screen transition-colors duration-300 ${
       darkMode ? 'dark bg-gray-900 text-white' : 'bg-white text-gray-900'
     }`}>
+      {/* Visitor Counter */}
+      <VisitorCounter />
+      
       {/* Products Page Header */}
       <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${
         darkMode 
